@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WeChat Simulator V9 (Full Service Grid)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --wx-green: #07C160;
+            --wx-bg-grey: #EDEDED;
+            --wx-item-press: #DEDEDE;
+            --wx-bubble-me: #95EC69;
+            --wx-border: #e5e5e5;
+        }
+
+        body { 
+            font-family: -apple-system, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", Arial, sans-serif; 
+            user-select: none; 
+            -webkit-tap-highlight-color: transparent;
+            background-color: #1a1a1a;
+            overflow: hidden;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .phone-frame {
+            box-shadow: 0 0 60px rgba(0,0,0,0.4);
+            border-radius: 40px;
+            overflow: hidden;
+            border: 8px solid #121212;
+            background: #EDEDED;
+            width: 375px;
+            height: 812px;
+        }
+
+        .wx-item { transition: background-color 0.1s; background-color: white; }
+        .wx-item:active { background-color: var(--wx-item-press); }
+
+        /* Chat Bubbles */
+        .bubble-arrow-left::before {
+            content: ""; position: absolute; top: 14px; left: -5px;
+            border-width: 5px 6px 5px 0; border-style: solid;
+            border-color: transparent #FFFFFF transparent transparent;
+        }
+        .bubble-arrow-right::before {
+            content: ""; position: absolute; top: 14px; right: -5px;
+            border-width: 5px 0 5px 6px; border-style: solid;
+            border-color: transparent transparent transparent #95EC69;
+        }
+
+        /* Transitions */
+        .slide-enter-active, .slide-leave-active { transition: transform 0.25s ease-out; }
+        .slide-enter-from { transform: translateX(100%); }
+        .slide-leave-to { transform: translateX(-25%); opacity: 0.9; }
+        
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        .popover-enter-active, .popover-leave-active { transition: all 0.15s ease; }
+        .popover-enter-from, .popover-leave-to { opacity: 0; transform: scale(0.9); }
+
+        .img-preview-enter-active, .img-preview-leave-active { transition: opacity 0.3s; }
+        .img-preview-enter-from, .img-preview-leave-to { opacity: 0; }
+
+        /* God Panel Transition */
+        .panel-enter-active, .panel-leave-active { transition: transform 0.3s ease; }
+        .panel-enter-from, .panel-leave-to { transform: translateY(100%); }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen w-screen">
+
+    <div id="app" class="w-full h-full relative flex items-center justify-center">
+        
+        <input type="file" ref="fileInput" class="hidden" @change="handleFileChange" accept="image/*">
+
+        <div class="phone-frame relative flex flex-col">
+            
+            <!-- Status Bar -->
+            <div class="h-[44px] bg-[#EDEDED] flex items-end justify-between px-6 pb-2 text-[14px] font-semibold z-50 text-black shrink-0 cursor-default">
+                <span>{{ systemTime }}</span>
+                <div class="flex gap-1.5 items-center">
+                    <i class="ph-fill ph-cell-signal-full"></i>
+                    <i class="ph-fill ph-wifi-high"></i>
+                    <div class="relative flex items-center justify-center">
+                        <i class="ph-fill ph-battery-full text-[24px]" v-if="batteryLevel > 20"></i>
+                        <i class="ph-fill ph-battery-warning text-[24px] text-red-500" v-else></i>
+                        <span class="absolute text-[8px] font-bold text-white left-1.5">{{ batteryLevel }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="flex-1 bg-[#EDEDED] relative overflow-hidden flex flex-col">
+                
+                <!-- 1. Chats -->
+                <div v-show="activeTab === 'chats'" class="h-full flex flex-col">
+                    <div class="h-[44px] bg-[#EDEDED] flex items-center justify-between px-4 shrink-0 sticky top-0 z-10 border-b border-[#dcdcdc]">
+                        <span class="font-medium text-[16px] text-[#111]">微信{{ totalUnread > 0 ? `(${totalUnread})` : '' }}</span>
+                        <div class="flex gap-4 text-[18px] text-[#111] relative">
+                            <i class="ph ph-magnifying-glass"></i>
+                            <i class="ph ph-plus-circle cursor-pointer" @click.stop="showAddMenu = !showAddMenu"></i>
+                            <!-- Add Menu -->
+                            <transition name="fade">
+                                <div v-if="showAddMenu" class="absolute top-9 right-[-10px] bg-[#4c4c4c] rounded-[6px] shadow-xl py-1 w-[140px] flex flex-col z-50 text-white text-[14px]" @click.stop>
+                                    <div class="flex items-center gap-3 px-4 py-3 hover:bg-[#5f5f5f] cursor-pointer border-b border-white/10" @click="createNewChat('group')">
+                                        <i class="ph-fill ph-chats"></i> 发起群聊
+                                    </div>
+                                    <div class="flex items-center gap-3 px-4 py-3 hover:bg-[#5f5f5f] cursor-pointer" @click="createNewChat('friend')">
+                                        <i class="ph-fill ph-user-plus"></i> 添加朋友
+                                    </div>
+                                    <div class="absolute -top-1.5 right-4 w-3 h-3 bg-[#4c4c4c] transform rotate-45"></div>
+                                </div>
+                            </transition>
+                        </div>
+                    </div>
+                    
+                    <div class="flex-1 overflow-y-auto no-scrollbar bg-white">
+                        <div v-for="(chat, index) in chats" :key="chat.id" class="wx-item flex items-center px-4 py-3 border-b border-[#f0f0f0] relative group" @click="openChat(chat)">
+                            <!-- Quick Delete -->
+                            <div v-if="godMode" class="absolute right-0 top-0 bottom-0 w-12 bg-red-500 text-white flex items-center justify-center translate-x-full group-hover:translate-x-0 transition-transform z-10 text-xs cursor-pointer" @click.stop="chats.splice(index, 1)">删</div>
+
+                            <div class="relative shrink-0">
+                                <img :src="chat.avatar" class="w-[48px] h-[48px] rounded-[6px] object-cover bg-gray-200" @click.stop="triggerUpload(chat)">
+                                <div v-if="chat.unread > 0" class="absolute -top-1.5 -right-1.5 bg-[#FA5151] text-white text-[10px] font-medium min-w-[18px] h-[18px] flex items-center justify-center rounded-full px-1">{{ chat.unread }}</div>
+                            </div>
+                            <div class="ml-3 flex-1 min-w-0">
+                                <div class="flex justify-between items-center mb-0.5">
+                                    <h3 class="text-[16px] font-normal text-[#111] truncate">{{ chat.name }}</h3>
+                                    <span class="text-[11px] text-[#B2B2B2]">{{ chat.time }}</span>
+                                </div>
+                                <p class="text-[13px] text-[#999] truncate max-w-[85%]">{{ getLastMsg(chat) }}</p>
+                            </div>
+                        </div>
+                        <div class="h-10 flex items-center justify-center text-gray-300 text-xs" v-if="chats.length === 0">暂无会话</div>
+                    </div>
+                </div>
+
+                <!-- 2. Contacts -->
+                <div v-show="activeTab === 'contacts'" class="h-full flex flex-col">
+                    <div class="h-[44px] bg-[#EDEDED] flex items-center justify-between px-4 shrink-0 border-b border-[#dcdcdc]">
+                        <span class="font-medium text-[16px]">通讯录</span>
+                        <i class="ph ph-user-plus text-[18px]" @click="createContactOrGroup('contact')"></i>
+                    </div>
+                    <div class="flex-1 overflow-y-auto no-scrollbar relative bg-[#EDEDED]">
+                         <div class="bg-white mb-2">
+                             <div class="wx-item flex items-center gap-3 px-4 py-2.5 border-b border-[#f0f0f0]">
+                                <div class="w-10 h-10 bg-[#FA9D3B] rounded-[4px] flex items-center justify-center text-white"><i class="ph-fill ph-user-plus text-xl"></i></div>
+                                <span class="text-[16px]">新的朋友</span>
+                            </div>
+                            <div class="wx-item flex items-center gap-3 px-4 py-2.5 border-b border-[#f0f0f0]">
+                                <div class="w-10 h-10 bg-[#07C160] rounded-[4px] flex items-center justify-center text-white"><i class="ph-fill ph-users-three text-xl"></i></div>
+                                <span class="text-[16px]">群聊</span>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white">
+                            <div class="px-4 py-1 text-[11px] text-[#7f7f7f] bg-[#EDEDED]">全部联系人</div>
+                            <div v-for="contact in contacts" :key="contact.id" class="wx-item flex items-center gap-3 px-4 py-2.5 border-b border-[#f0f0f0]" @click="openContactDetail(contact)">
+                                <img :src="contact.avatar" class="w-10 h-10 rounded-[4px] bg-gray-200 object-cover" @click.stop="triggerUpload(contact)">
+                                <span class="text-[16px] flex-1">{{ contact.name }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Discover -->
+                <div v-show="activeTab === 'discover'" class="h-full bg-[#EDEDED]">
+                    <div class="h-[44px] flex items-center justify-center shrink-0 bg-[#EDEDED] border-b border-[#dcdcdc]">
+                        <span class="font-medium text-[16px]">发现</span>
+                    </div>
+                    <div class="overflow-y-auto h-full pb-20">
+                        <div @click="openPage('moments')" class="bg-white px-4 py-3.5 flex items-center justify-between mt-0 border-b border-[#e5e5e5] cursor-pointer active:bg-[#d9d9d9]">
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-camera-retro text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-red-500 to-purple-600 text-[20px]"></i>
+                                <span class="text-[16px]">朋友圈</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="relative" v-if="hasNewMoment">
+                                    <img :src="currentUser.avatar" class="w-8 h-8 rounded-[4px]">
+                                    <div class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-[#FA5151] rounded-full border border-white"></div>
+                                </div>
+                                <i class="ph ph-caret-right text-gray-400"></i>
+                            </div>
+                        </div>
+                        <div class="mt-2 border-y border-[#e5e5e5] bg-white">
+                            <div class="px-4 py-3.5 flex items-center justify-between active:bg-[#d9d9d9]" @click="openPage('channels')">
+                                <div class="flex items-center gap-3">
+                                    <i class="ph-fill ph-video text-[#FA9D3B] text-[20px]"></i>
+                                    <span class="text-[16px]">视频号</span>
+                                </div>
+                                <i class="ph ph-caret-right text-gray-400"></i>
+                            </div>
+                        </div>
+                         <div class="mt-2 border-y border-[#e5e5e5] bg-white">
+                             <div class="px-4 py-3.5 flex items-center justify-between border-b border-[#f0f0f0] active:bg-[#d9d9d9]" @click="openPage('scan')">
+                                <div class="flex items-center gap-3">
+                                    <i class="ph-fill ph-scan text-[#2782D7] text-[20px]"></i>
+                                    <span class="text-[16px]">扫一扫</span>
+                                </div>
+                                <i class="ph ph-caret-right text-gray-400"></i>
+                            </div>
+                             <div class="px-4 py-3.5 flex items-center justify-between active:bg-[#d9d9d9]" @click="openPage('search')">
+                                <div class="flex items-center gap-3">
+                                    <i class="ph-fill ph-magnifying-glass text-[#FA5151] text-[20px]"></i>
+                                    <span class="text-[16px]">搜一搜</span>
+                                </div>
+                                <i class="ph ph-caret-right text-gray-400"></i>
+                            </div>
+                        </div>
+                         <div class="mt-2 border-y border-[#e5e5e5] bg-white">
+                             <div class="px-4 py-3.5 flex items-center justify-between active:bg-[#d9d9d9]" @click="openPage('miniprogram')">
+                                <div class="flex items-center gap-3">
+                                    <i class="ph-fill ph-compass text-[#7D68AD] text-[20px]"></i>
+                                    <span class="text-[16px]">小程序</span>
+                                </div>
+                                <i class="ph ph-caret-right text-gray-400"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Me -->
+                <div v-show="activeTab === 'me'" class="h-full bg-[#EDEDED]">
+                    <div class="bg-white pt-14 pb-10 px-6 flex items-start gap-5 mb-2 relative active:bg-[#d9d9d9]">
+                        <img :src="currentUser.avatar" class="w-[64px] h-[64px] rounded-[6px] object-cover bg-gray-200 cursor-pointer" @click="triggerUpload(currentUser)">
+                        <div class="flex-1 pt-1">
+                            <h2 class="text-[20px] font-semibold text-[#111]">{{ currentUser.nickname }}</h2>
+                            <div class="flex items-center justify-between mt-2">
+                                <span class="text-[14px] text-[#7f7f7f]">微信号: {{ currentUser.wechatId }}</span>
+                                <div class="flex items-center gap-4">
+                                    <i class="ph ph-qr-code text-lg text-[#7f7f7f]"></i>
+                                    <i class="ph ph-caret-right text-gray-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div @click="openPage('services')" class="bg-white px-4 py-3.5 flex items-center justify-between mt-2 border-y border-[#e5e5e5] cursor-pointer active:bg-[#d9d9d9]">
+                        <div class="flex items-center gap-3">
+                            <i class="ph-fill ph-wallet text-[#07C160] text-[22px]"></i>
+                            <span class="text-[16px]">服务</span>
+                        </div>
+                        <i class="ph ph-caret-right text-gray-400"></i>
+                    </div>
+
+                    <div class="mt-2 border-y border-[#e5e5e5] bg-white">
+                        <div class="px-4 py-3.5 flex items-center justify-between border-b border-[#f0f0f0] active:bg-[#d9d9d9]">
+                            <div class="flex items-center gap-3">
+                                <i class="ph-fill ph-cube text-[#2782D7] text-[22px]"></i>
+                                <span class="text-[16px]">收藏</span>
+                            </div>
+                            <i class="ph ph-caret-right text-gray-400"></i>
+                        </div>
+                         <div class="px-4 py-3.5 flex items-center justify-between border-b border-[#f0f0f0] active:bg-[#d9d9d9]">
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-image text-[20px] text-[#2782D7]"></i>
+                                <span class="text-[16px]">朋友圈</span>
+                            </div>
+                            <i class="ph ph-caret-right text-gray-400"></i>
+                        </div>
+                        <div class="px-4 py-3.5 flex items-center justify-between active:bg-[#d9d9d9]">
+                            <div class="flex items-center gap-3">
+                                <i class="ph-fill ph-smiley text-[#FA9D3B] text-[22px]"></i>
+                                <span class="text-[16px]">表情</span>
+                            </div>
+                            <i class="ph ph-caret-right text-gray-400"></i>
+                        </div>
+                    </div>
+
+                    <div class="mt-2 border-y border-[#e5e5e5] bg-white">
+                        <div class="px-4 py-3.5 flex items-center justify-between active:bg-[#d9d9d9]">
+                            <div class="flex items-center gap-3">
+                                <i class="ph-fill ph-gear text-[#2782D7] text-[22px]"></i>
+                                <span class="text-[16px]">设置</span>
+                            </div>
+                            <i class="ph ph-caret-right text-gray-400"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= SUB PAGES ================= -->
+            
+            <!-- Chat Detail -->
+            <transition name="slide">
+                <div v-if="currentPage === 'chat' && activeChat" class="absolute inset-0 bg-[#EDEDED] z-50 flex flex-col">
+                    <div class="h-[44px] flex items-center justify-between px-3 border-b border-[#dcdcdc] bg-[#EDEDED] shrink-0">
+                        <div class="flex items-center px-2 py-1 cursor-pointer -ml-2" @click="goBack">
+                            <i class="ph ph-caret-left text-[24px] text-[#111]"></i>
+                            <span class="text-[16px] text-[#111] ml-[-2px]">微信</span>
+                        </div>
+                        <span class="font-medium text-[17px] text-[#111]">{{ activeChat.name }}</span>
+                        <i class="ph ph-dots-three text-[28px] text-[#111] px-2"></i>
+                    </div>
+                    
+                    <!-- Chat Messages -->
+                    <div id="chat-container" class="flex-1 overflow-y-auto p-4 gap-4 flex flex-col bg-[#EDEDED]" @click="closeChatPanels">
+                        <div v-for="msg in activeChat.messages" :key="msg.id">
+                            <div v-if="msg.type === 'time'" class="text-center text-[12px] text-[#b2b2b2] my-2">{{ msg.text }}</div>
+                            
+                            <div v-else :class="['flex items-start gap-2.5', msg.isMe ? 'flex-row-reverse' : '']">
+                                <img :src="msg.isMe ? currentUser.avatar : activeChat.avatar" class="w-10 h-10 rounded-[4px] bg-gray-200 cursor-pointer object-cover" @click="triggerUpload(msg.isMe ? currentUser : activeChat)">
+                                
+                                <!-- Text -->
+                                <div v-if="msg.msgType === 'text'" :class="['px-2.5 py-2 rounded-[4px] text-[16px] text-[#111] max-w-[70%] relative border break-all leading-6', msg.isMe ? 'bg-[#95EC69] border-[#8AD863] bubble-arrow-right' : 'bg-white border-[#EDEDED] bubble-arrow-left']">
+                                    {{ msg.text }}
+                                </div>
+
+                                <!-- Image -->
+                                <div v-else-if="msg.msgType === 'image'" class="max-w-[40%]">
+                                    <img :src="msg.content" class="rounded-[4px] border border-gray-200 cursor-pointer" @click="previewImage = msg.content">
+                                </div>
+
+                                <!-- Voice -->
+                                <div v-else-if="msg.msgType === 'voice'" :class="['h-10 min-w-[80px] rounded-[4px] flex items-center px-3 border cursor-pointer', msg.isMe ? 'bg-[#95EC69] border-[#8AD863] justify-end' : 'bg-white border-[#EDEDED]']">
+                                    <span class="text-sm mr-2 text-gray-500" v-if="msg.isMe">12"</span>
+                                    <i class="ph-fill ph-wifi-high rotate-90 text-lg" v-if="msg.isMe"></i>
+                                    <i class="ph-fill ph-wifi-high -rotate-90 text-lg" v-else></i>
+                                    <span class="text-sm ml-2 text-gray-500" v-if="!msg.isMe">12"</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Input Bar Area -->
+                    <div class="bg-[#F7F7F7] border-t border-[#E5E5E5] shrink-0 flex flex-col">
+                         <!-- God Mode Sender Switch -->
+                        <div class="absolute bottom-[60px] left-2 bg-black/70 backdrop-blur text-white text-[10px] px-3 py-1 rounded-full z-20 flex gap-2 pointer-events-auto" v-if="godMode">
+                            <span class="opacity-70">发送者:</span>
+                            <span @click="sendAsMe = true" :class="sendAsMe ? 'text-green-400 font-bold' : 'opacity-50 cursor-pointer'">我</span>
+                            <span class="opacity-30">|</span>
+                            <span @click="sendAsMe = false" :class="!sendAsMe ? 'text-green-400 font-bold' : 'opacity-50 cursor-pointer'">对方</span>
+                        </div>
+
+                        <div class="flex items-end p-2 gap-2 pb-[safe-area-inset-bottom]">
+                            <i class="ph ph-microphone text-[28px] text-[#111] mb-1.5 mx-1 cursor-pointer" @click="sendVoiceMsg"></i>
+                            
+                            <div class="flex-1 min-h-[40px] mb-1 bg-white rounded-[6px] flex items-center px-2">
+                                <input v-model="inputMessage" @click="closeChatPanels" @keyup.enter="sendTextMsg" type="text" class="w-full bg-transparent text-[16px] outline-none h-full placeholder-gray-400" placeholder="">
+                            </div>
+                            
+                            <i class="ph ph-smiley text-[28px] text-[#111] mb-1.5 mx-1 cursor-pointer" @click="togglePanel('emoji')"></i>
+                            
+                            <!-- Send Button or + Button -->
+                            <button v-if="inputMessage.trim()" @click="sendTextMsg" class="mb-1.5 bg-[#07C160] text-white px-3 py-1.5 rounded-[4px] text-sm font-medium">发送</button>
+                            <i v-else class="ph ph-plus-circle text-[28px] text-[#111] mb-1.5 mx-1 cursor-pointer" @click="togglePanel('plus')"></i>
+                        </div>
+
+                        <!-- Emoji Panel -->
+                        <div v-if="activePanel === 'emoji'" class="h-[250px] bg-[#EDEDED] border-t border-[#dcdcdc] overflow-y-auto p-2 grid grid-cols-8 gap-2">
+                             <div v-for="e in emojis" :key="e" @click="appendEmoji(e)" class="text-[24px] flex items-center justify-center cursor-pointer h-10 hover:bg-gray-200 rounded">{{ e }}</div>
+                        </div>
+
+                        <!-- Plus Panel -->
+                        <div v-if="activePanel === 'plus'" class="h-[250px] bg-[#EDEDED] border-t border-[#dcdcdc] p-6 grid grid-cols-4 gap-6">
+                            <div class="flex flex-col items-center gap-2 cursor-pointer" @click="triggerChatImageUpload">
+                                <div class="w-14 h-14 bg-white rounded-[12px] flex items-center justify-center text-[#555] border border-[#dcdcdc]"><i class="ph ph-image text-[28px]"></i></div>
+                                <span class="text-[12px] text-[#666]">相册</span>
+                            </div>
+                            <!-- More options... -->
+                        </div>
+                    </div>
+                </div>
+            </transition>
+
+            <!-- Moments -->
+            <transition name="slide">
+                <div v-if="currentPage === 'moments'" class="absolute inset-0 bg-white z-50 flex flex-col overflow-y-auto no-scrollbar">
+                    <div class="absolute top-0 left-0 right-0 h-[60px] flex items-end justify-between px-2 pb-3 z-20 text-white mix-blend-difference pointer-events-none">
+                         <div class="flex items-center px-2 py-1 cursor-pointer pointer-events-auto" @click="goBack">
+                            <i class="ph ph-caret-left text-[24px]"></i>
+                            <span class="text-[16px] font-medium ml-[-4px]">发现</span>
+                        </div>
+                        <i class="ph-fill ph-camera text-[24px] px-2 pointer-events-auto cursor-pointer" @click="showPostMoment = true"></i>
+                    </div>
+
+                    <!-- Cover -->
+                    <div class="relative h-[320px] bg-gray-800 shrink-0 group">
+                        <img src="https://picsum.photos/800/600?random=1" class="w-full h-full object-cover opacity-90">
+                        <div class="absolute -bottom-10 right-3 flex items-start gap-3 flex-row-reverse z-10">
+                             <img :src="currentUser.avatar" class="w-[70px] h-[70px] rounded-[8px] bg-gray-200 cursor-pointer border border-gray-100" @click.stop="triggerUpload(currentUser)">
+                             <div class="mt-3 text-right">
+                                 <span class="text-white font-bold text-[18px] drop-shadow-md block">{{ currentUser.nickname }}</span>
+                             </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-16 pb-10 px-4 flex flex-col gap-8 bg-white min-h-screen" @click="closeInteractionMenus">
+                        <div v-for="(moment, idx) in moments" :key="moment.id" class="flex gap-3 border-b border-gray-100 pb-4 relative">
+                            <img :src="moment.avatar" class="w-[42px] h-[42px] rounded-[4px] bg-gray-200 shrink-0 cursor-pointer object-cover">
+                            <div class="flex-1">
+                                <h4 class="text-[#576b95] font-bold text-[16px] leading-tight mb-1">{{ moment.name }}</h4>
+                                <p class="text-[15px] text-[#111] leading-[1.5] break-all whitespace-pre-wrap">{{ moment.content }}</p>
+                                <div class="mt-2 flex flex-wrap gap-1 w-[240px]" v-if="moment.images && moment.images.length">
+                                     <img v-for="(img, i) in moment.images" :src="img" class="w-[75px] h-[75px] object-cover bg-gray-100 cursor-pointer" @click.stop="previewImage = img">
+                                </div>
+                                <div class="flex justify-between items-center mt-2 relative h-6">
+                                    <span class="text-[12px] text-gray-400">{{ moment.time }}</span>
+                                    <!-- ... Button -->
+                                    <div class="bg-[#f7f7f7] w-9 h-6 rounded-[4px] flex items-center justify-center text-[#576b95] cursor-pointer active:bg-gray-200" @click.stop="toggleInteractionMenu(moment.id)">
+                                        <i class="ph-fill ph-dots-two text-lg"></i>
+                                    </div>
+                                    
+                                    <!-- Like/Comment Menu -->
+                                    <transition name="popover">
+                                        <div v-if="activeInteractionId === moment.id" class="absolute right-10 top-[-5px] bg-[#4c4c4c] rounded-[4px] flex overflow-hidden text-white text-[13px] z-10 shadow-lg h-9 items-center">
+                                            <div class="px-5 h-full flex items-center gap-2 cursor-pointer hover:bg-[#5f5f5f] whitespace-nowrap" @click.stop="likeMoment(moment)">
+                                                <i :class="hasLiked(moment) ? 'fas fa-heart' : 'far fa-heart'"></i> {{ hasLiked(moment) ? '取消' : '赞' }}
+                                            </div>
+                                            <div class="w-[1px] h-4 bg-[#333]"></div>
+                                            <div class="px-5 h-full flex items-center gap-2 cursor-pointer hover:bg-[#5f5f5f] whitespace-nowrap" @click.stop="showCommentInput(moment.id)">
+                                                <i class="far fa-comment"></i> 评论
+                                            </div>
+                                        </div>
+                                    </transition>
+                                </div>
+
+                                <!-- Likes & Comments Box -->
+                                <div class="bg-[#F7F7F7] mt-2 rounded-[4px] text-[14px] p-2 flex flex-col gap-1" v-if="moment.likes.length > 0 || moment.comments.length > 0">
+                                    <div class="text-[#576b95] text-[14px] leading-5 border-b border-gray-200/50 pb-1 mb-1" v-if="moment.likes.length">
+                                        <i class="far fa-heart text-[12px] mr-1"></i>
+                                        <span class="font-medium">{{ moment.likes.join(', ') }}</span>
+                                    </div>
+                                    <div v-for="(c, ci) in moment.comments" :key="ci" class="text-[14px] leading-5 group/comment">
+                                        <span class="text-[#576b95] font-medium">{{ c.user }}</span>
+                                        <span class="text-[#111]">: {{ c.text }}</span>
+                                        <span v-if="godMode" class="text-red-400 text-xs ml-2 cursor-pointer opacity-0 group-hover/comment:opacity-100" @click="moment.comments.splice(ci, 1)">[删]</span>
+                                    </div>
+                                </div>
+
+                                <!-- God Mode Extra -->
+                                <div v-if="godMode" class="mt-2 flex gap-2 opacity-50 hover:opacity-100 transition-opacity">
+                                    <button class="text-xs text-red-500" @click="moments.splice(idx, 1)">删除</button>
+                                    <button class="text-xs text-blue-500" @click="godAddLike(moment)">+伪造赞</button>
+                                </div>
+
+                                <!-- Inline Comment Input -->
+                                <div v-if="commentInputId === moment.id" class="mt-3 flex gap-2" @click.stop>
+                                    <input v-model="tempComment" ref="commentInputRef" class="flex-1 border border-[#07C160] rounded px-2 py-1.5 text-sm outline-none" placeholder="评论" @keyup.enter="submitComment(moment)">
+                                    <button class="bg-[#07C160] text-white px-3 py-1 rounded text-sm" @click="submitComment(moment)">发送</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </transition>
+
+            <!-- Services (Wallet) -->
+            <transition name="slide">
+                <div v-if="currentPage === 'services'" class="absolute inset-0 bg-[#EDEDED] z-50 flex flex-col overflow-y-auto">
+                    <div class="h-[44px] bg-[#EDEDED] flex items-center justify-between px-2 border-b border-[#E5E5E5] sticky top-0 z-10">
+                        <div class="flex items-center px-2 py-1 cursor-pointer text-[#111]" @click="goBack">
+                            <i class="ph ph-caret-left text-[20px]"></i>
+                            <span class="text-[16px] font-medium ml-[-4px]">我</span>
+                        </div>
+                        <span class="font-medium text-[17px]">服务</span>
+                        <i class="ph ph-dots-three text-[24px] px-2 text-[#111]"></i>
+                    </div>
+                    <div class="p-2">
+                        <div class="bg-[#07C160] rounded-[8px] p-5 text-white shadow-sm mb-3 flex items-center justify-between h-[140px]">
+                            <div class="flex-1 flex flex-col items-center justify-center border-r border-white/20 h-20 gap-2">
+                                <i class="ph ph-qr-code text-[32px]"></i>
+                                <span class="text-[14px]">收付款</span>
+                            </div>
+                            <div class="flex-1 flex flex-col items-center justify-center h-20 gap-1">
+                                <i class="ph-fill ph-wallet text-[32px]"></i>
+                                <span class="text-[14px]">钱包</span>
+                                <span class="text-[16px] font-bold">¥{{ currentUser.balance }}</span>
+                            </div>
+                        </div>
+
+                        <!-- Grids - To be filled -->
+                        <div class="bg-white rounded-[8px] p-4 mb-3">
+                            <h5 class="text-[12px] text-[#7f7f7f] mb-4 font-normal">金融理财</h5>
+                            <div class="grid grid-cols-4 gap-y-6 text-center">
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-credit-card text-[#F6C444] text-[28px]"></i><span class="text-[11px] text-[#333]">信用卡还款</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-trend-up text-[#FA9D3B] text-[28px]"></i><span class="text-[11px] text-[#333]">理财通</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-umbrella text-[#07C160] text-[28px]"></i><span class="text-[11px] text-[#333]">保险服务</span></div>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-[8px] p-4 mb-3">
+                            <h5 class="text-[12px] text-[#7f7f7f] mb-4 font-normal">生活服务</h5>
+                            <div class="grid grid-cols-4 gap-y-6 text-center">
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-device-mobile text-[#07C160] text-[28px]"></i><span class="text-[11px] text-[#333]">手机充值</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-lightning text-[#F6C444] text-[28px]"></i><span class="text-[11px] text-[#333]">生活缴费</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-drop text-[#2782D7] text-[28px]"></i><span class="text-[11px] text-[#333]">城市服务</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-heart text-[#FA5151] text-[28px]"></i><span class="text-[11px] text-[#333]">腾讯公益</span></div>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-[8px] p-4">
+                            <h5 class="text-[12px] text-[#7f7f7f] mb-4 font-normal">交通出行</h5>
+                            <div class="grid grid-cols-4 gap-y-6 text-center">
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-train text-[#2782D7] text-[28px]"></i><span class="text-[11px] text-[#333]">火车票机票</span></div>
+                                <div class="flex flex-col items-center gap-2"><i class="ph-fill ph-car text-[#07C160] text-[28px]"></i><span class="text-[11px] text-[#333]">滴滴出行</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </transition>
+
+            <!-- Lightbox (Image Preview) -->
+            <transition name="img-preview">
+                <div v-if="previewImage" class="absolute inset-0 bg-black z-[100] flex items-center justify-center" @click="previewImage = null">
+                    <img :src="previewImage" class="max-w-full max-h-full object-contain">
+                </div>
+            </transition>
+
+            <!-- Post Moment Modal -->
+            <div v-if="showPostMoment" class="absolute inset-0 bg-white z-[60] flex flex-col animate-fade-in-up">
+                <div class="h-[44px] flex items-center justify-between px-4 border-b border-gray-100">
+                    <button @click="showPostMoment = false" class="text-[16px] text-[#111]">取消</button>
+                    <button @click="postNewMoment" class="bg-[#07C160] text-white px-4 py-1 rounded-[4px] text-sm font-medium">发表</button>
+                </div>
+                <div class="p-4">
+                    <!-- Mock Identity Selector -->
+                    <div v-if="godMode" class="mb-3 flex items-center gap-2 p-2 bg-yellow-50 rounded border border-yellow-100">
+                         <span class="text-sm font-bold text-yellow-700">🎭 发布身份:</span>
+                         <select v-model="selectedPosterId" class="text-sm border rounded p-1 flex-1 outline-none">
+                             <option :value="currentUser.id">我 ({{currentUser.nickname}})</option>
+                             <option v-for="c in contacts" :key="c.id" :value="c.id">{{ c.name }}</option>
+                         </select>
+                    </div>
+                    
+                    <textarea v-model="newMomentContent" class="w-full h-32 outline-none text-[16px] placeholder-gray-400" placeholder="这一刻的想法..."></textarea>
+                    <div class="w-24 h-24 bg-[#f0f0f0] flex items-center justify-center rounded-[4px] cursor-pointer mt-2" @click="triggerUpload(null, 'moment')">
+                        <i class="ph ph-plus text-gray-400 text-4xl" v-if="!newMomentImage"></i>
+                        <img v-else :src="newMomentImage" class="w-full h-full object-cover rounded-[4px]">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TabBar -->
+            <div class="h-[50px] bg-[#F7F7F7] border-t border-[#dcdcdc] flex items-center justify-around shrink-0 z-30 pb-1" @click="handleTabClick">
+                <div @click="switchTab('chats')" class="flex flex-col items-center justify-center gap-0.5 w-16 relative h-full cursor-pointer">
+                    <div v-if="totalUnread > 0" class="absolute top-0.5 right-3 bg-[#FA5151] text-white text-[10px] font-medium px-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full z-10">{{ totalUnread }}</div>
+                    <i :class="activeTab === 'chats' ? 'ph-fill text-[#07C160]' : 'ph text-[#111]'" class="ph-chat-circle-dots text-[24px]"></i>
+                    <span class="text-[10px]" :class="activeTab === 'chats' ? 'text-[#07C160]' : 'text-[#111]'">微信</span>
+                </div>
+                <div @click="switchTab('contacts')" class="flex flex-col items-center justify-center gap-0.5 w-16 h-full cursor-pointer">
+                    <i :class="activeTab === 'contacts' ? 'ph-fill text-[#07C160]' : 'ph text-[#111]'" class="ph-address-book text-[24px]"></i>
+                    <span class="text-[10px]" :class="activeTab === 'contacts' ? 'text-[#07C160]' : 'text-[#111]'">通讯录</span>
+                </div>
+                <div @click="switchTab('discover')" class="flex flex-col items-center justify-center gap-0.5 w-16 relative h-full cursor-pointer">
+                    <div class="absolute top-0.5 right-3 w-2 h-2 bg-[#FA5151] rounded-full z-10" v-if="hasNewMoment"></div>
+                    <i :class="activeTab === 'discover' ? 'ph-fill text-[#07C160]' : 'ph text-[#111]'" class="ph-compass text-[24px]"></i>
+                    <span class="text-[10px]" :class="activeTab === 'discover' ? 'text-[#07C160]' : 'text-[#111]'">发现</span>
+                </div>
+                <div @click="switchTab('me')" class="flex flex-col items-center justify-center gap-0.5 w-16 h-full cursor-pointer">
+                    <i :class="activeTab === 'me' ? 'ph-fill text-[#07C160]' : 'ph text-[#111]'" class="ph-user text-[24px]"></i>
+                    <span class="text-[10px]" :class="activeTab === 'me' ? 'text-[#07C160]' : 'text-[#111]'">我</span>
+                </div>
+            </div>
+             <div class="bg-[#F7F7F7] h-[20px] w-full shrink-0 z-30"></div> 
+        </div>
+
+        <!-- God Panel (Admin) -->
+        <transition name="panel">
+            <div v-if="showGodPanel" class="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl z-[80] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] flex flex-col max-h-[70%] h-auto" @click.stop>
+                <!-- Panel Header -->
+                <div class="h-12 flex items-center justify-between px-4 border-b border-gray-100 shrink-0">
+                    <h3 class="font-bold text-lg text-gray-800 flex items-center gap-2">
+                        <i class="ph-fill ph-crown text-yellow-500"></i> 上帝控制台
+                    </h3>
+                    <button @click="showGodPanel = false" class="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+
+                <!-- Panel Content -->
+                <div class="flex-1 overflow-y-auto p-5 space-y-6">
+                    
+                    <!-- Section 1: User Data -->
+                    <div class="space-y-3">
+                        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider">个人数据 (User)</h4>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">钱包余额 (¥)</label>
+                                <input v-model="currentUser.balance" type="text" class="w-full border border-gray-300 rounded px-2 py-2 text-sm font-mono focus:border-green-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">微信号</label>
+                                <input v-model="currentUser.wechatId" type="text" class="w-full border border-gray-300 rounded px-2 py-2 text-sm focus:border-green-500 outline-none">
+                            </div>
+                            <div class="col-span-2">
+                                <label class="block text-xs text-gray-500 mb-1">昵称</label>
+                                <input v-model="currentUser.nickname" type="text" class="w-full border border-gray-300 rounded px-2 py-2 text-sm focus:border-green-500 outline-none">
+                            </div>
+                        </div>
+                        <button class="w-full py-2 border border-dashed border-gray-300 rounded text-sm text-gray-500 hover:bg-gray-50 flex items-center justify-center gap-2" @click="triggerUpload(currentUser)">
+                            <i class="ph ph-image"></i> 更换我的头像
+                        </button>
+                    </div>
+
+                    <div class="w-full h-[1px] bg-gray-100"></div>
+
+                    <!-- Section 2: System Status -->
+                    <div class="space-y-3">
+                        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider">系统状态 (System)</h4>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700">开启上帝模式 (God Mode)</span>
+                            <div @click="godMode = !godMode" :class="['w-11 h-6 rounded-full flex items-center p-1 cursor-pointer transition-colors', godMode ? 'bg-green-500' : 'bg-gray-300']">
+                                <div :class="['w-4 h-4 bg-white rounded-full shadow transform transition-transform', godMode ? 'translate-x-5' : 'translate-x-0']"></div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">顶部时间</label>
+                                <input v-model="systemTime" type="text" class="w-full border border-gray-300 rounded px-2 py-2 text-sm text-center">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">电量 (%)</label>
+                                <input v-model="batteryLevel" type="number" min="1" max="100" class="w-full border border-gray-300 rounded px-2 py-2 text-sm text-center">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+        <div v-if="showGodPanel" class="absolute inset-0 bg-black/20 z-[70]" @click="showGodPanel = false"></div>
+
+        <!-- Floating Trigger -->
+        <div class="fixed bottom-6 right-6 z-[100]">
+             <button @click="showGodPanel = !showGodPanel" :class="godMode ? 'bg-yellow-500 scale-110 shadow-yellow-500/50' : 'bg-gray-700 shadow-gray-700/50'" class="text-white w-14 h-14 rounded-full shadow-xl hover:brightness-110 transition-all flex items-center justify-center border-4 border-[#222] active:scale-95" title="打开上帝控制台">
+                <i class="ph-fill ph-crown text-2xl"></i>
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, computed, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                // State
+                const godMode = ref(true);
+                const showGodPanel = ref(false);
+                
+                const systemTime = ref('12:30');
+                const batteryLevel = ref(100);
+
+                const activeTab = ref('chats');
+                const currentPage = ref(null); 
+                const activeChatId = ref(null);
+                
+                // UI Flags
+                const showAddMenu = ref(false);
+                const showPostMoment = ref(false);
+                const activePanel = ref(null); 
+                const activeInteractionId = ref(null); 
+                const commentInputId = ref(null);
+                const inputMessage = ref('');
+                const tempComment = ref('');
+                const sendAsMe = ref(true);
+                const previewImage = ref(null);
+                const selectedPosterId = ref('me');
+                
+                // Media
+                const fileInput = ref(null);
+                const uploadTarget = ref(null); 
+                const newMomentContent = ref('');
+                const newMomentImage = ref(null);
+                const hasNewMoment = ref(false);
+                const commentInputRef = ref(null);
+
+                const currentUser = reactive({
+                    id: 'me', nickname: '大山', wechatId: 'dashan_001',
+                    avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=DaShan',
+                    balance: '233.00'
+                });
+
+                const contacts = reactive([
+                    { id: 1, name: '产品经理', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=PM' },
+                    { id: 2, name: '运营小妹', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Ops' },
+                    { id: 3, name: '技术总监', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=CTO' }
+                ]);
+
+                const chats = reactive([
+                    { 
+                        id: 100, name: '文件传输助手', unread: 0, 
+                        avatar: 'https://api.dicebear.com/9.x/initials/svg?seed=File', 
+                        muted: false, time: '12:20',
+                        messages: [{ id: 1, msgType: 'image', content: 'https://picsum.photos/200/300', isMe: true }]
+                    },
+                    { 
+                        id: 101, name: '产品经理', unread: 2, 
+                        avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=PM', 
+                        muted: false, time: '11:30',
+                        messages: [{ id: 1, msgType: 'text', text: '老板说要五彩斑斓的黑', isMe: false }]
+                    }
+                ]);
+
+                const moments = reactive([
+                    {
+                        id: 1, name: '技术总监', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=CTO',
+                        content: '新版本上线！', time: '10分钟前', images: ['https://picsum.photos/400/300?random=2'],
+                        likes: ['大山', '运营小妹'], comments: []
+                    }
+                ]);
+
+                const emojis = ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','🥰','😗','😙','😚','🙂','🤗','🤔','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','😴','😌','😛','😜','😝','🤤','😒','😓','😔','😕','🙃','🤑','😲','☹️','🙁','😖','😞','😟','😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','🥵','🥶','😳','🤪','😵','😡','😠','🤬','😷','🤒','🤕','🤢','🤮','🤧','😇','🤠','🤡','🥳','🥴','🥺','🤥','🤫','🤭','🧐','🤓','😈','👿','👹','👺','💀','👻','👽','🤖','💩','😺','😸','😹','😻','😼','😽','🙀','😿','😾'];
+
+                // Computed
+                const activeChat = computed(() => chats.find(c => c.id === activeChatId.value));
+                const totalUnread = computed(() => {
+                     if (currentPage.value === 'chat') return 0;
+                     return chats.reduce((acc, c) => acc + c.unread, 0);
+                });
+
+                // Methods
+                const switchTab = (t) => { currentPage.value = null; activeTab.value = t; };
+                const goBack = () => { currentPage.value = null; activeChatId.value = null; };
+                const getLastMsg = (chat) => {
+                    if (!chat.messages.length) return '';
+                    const last = chat.messages[chat.messages.length - 1];
+                    return last.msgType === 'text' ? last.text : `[${last.msgType === 'image' ? '图片' : '语音'}]`;
+                };
+
+                const openChat = (chat) => {
+                    activeChatId.value = chat.id;
+                    chat.unread = 0;
+                    if(!godMode.value) sendAsMe.value = true;
+                    currentPage.value = 'chat';
+                    activePanel.value = null;
+                    nextTick(() => document.getElementById('chat-container')?.scrollTo(0, 99999));
+                };
+                
+                const openPage = (p) => currentPage.value = p;
+                const openContactDetail = (c) => {
+                    const exist = chats.find(chat => chat.name === c.name);
+                    if(exist) openChat(exist);
+                    else {
+                         const newChat = { ...c, id: Date.now(), unread: 0, time: '', messages: [] };
+                         chats.unshift(newChat);
+                         openChat(newChat);
+                    }
+                }
+
+                // Panels
+                const togglePanel = (p) => {
+                    activePanel.value = activePanel.value === p ? null : p;
+                    if(activePanel.value) {
+                        nextTick(() => document.getElementById('chat-container')?.scrollTo(0, 99999));
+                    }
+                };
+                const closeChatPanels = () => { activePanel.value = null; };
+                const appendEmoji = (e) => { inputMessage.value += e; };
+
+                // Contact Mgmt
+                const createNewChat = (type) => {
+                    showAddMenu.value = false;
+                    const n = prompt(type==='group'?"群名":"名字");
+                    if(!n) return;
+                    const newChat = { id: Date.now(), name: n, unread:0, avatar: `https://api.dicebear.com/9.x/${type==='group'?'initials':'avataaars'}/svg?seed=${n}`, time:'刚刚', messages: [] };
+                    chats.unshift(newChat);
+                    openChat(newChat);
+                };
+
+                // Upload
+                const triggerUpload = (refObj, type='avatar') => {
+                    uploadTarget.value = { type, ref: refObj };
+                    fileInput.value.click();
+                };
+                const triggerChatImageUpload = () => triggerUpload(null, 'chat');
+                const triggerMomentImageUpload = () => triggerUpload(null, 'moment');
+                
+                const handleFileChange = (e) => {
+                    const f = e.target.files[0];
+                    if(!f) return;
+                    const r = new FileReader();
+                    r.onload = (ev) => {
+                        const res = ev.target.result;
+                        if(uploadTarget.value.type === 'avatar') uploadTarget.value.ref.avatar = res;
+                        else if(uploadTarget.value.type === 'moment') newMomentImage.value = res;
+                        else if(uploadTarget.value.type === 'chat') {
+                            if(!activeChat.value) return;
+                            activeChat.value.messages.push({ id: Date.now(), msgType: 'image', content: res, isMe: sendAsMe.value });
+                            activePanel.value = null;
+                            nextTick(() => document.getElementById('chat-container')?.scrollTo(0, 99999));
+                        }
+                    };
+                    r.readAsDataURL(f);
+                    e.target.value = '';
+                };
+
+                // Sending
+                const sendTextMsg = () => {
+                    if(!inputMessage.value.trim()) return;
+                    activeChat.value.messages.push({ id: Date.now(), msgType: 'text', text: inputMessage.value, isMe: sendAsMe.value });
+                    const idx = chats.findIndex(c => c.id === activeChat.value.id);
+                    if(idx > 0) { const c = chats.splice(idx, 1)[0]; c.time='剛剛'; chats.unshift(c); }
+                    inputMessage.value = '';
+                    nextTick(() => document.getElementById('chat-container')?.scrollTo(0, 99999));
+                };
+                const sendVoiceMsg = () => {
+                     activeChat.value.messages.push({ id: Date.now(), msgType: 'voice', isMe: sendAsMe.value });
+                     nextTick(() => document.getElementById('chat-container')?.scrollTo(0, 99999));
+                };
+
+                // Moments
+                const toggleInteractionMenu = (id) => {
+                    activeInteractionId.value = activeInteractionId.value === id ? null : id;
+                };
+                const closeInteractionMenus = () => {
+                    activeInteractionId.value = null;
+                    if(!tempComment.value) commentInputId.value = null; 
+                };
+                const hasLiked = (m) => m.likes.includes(currentUser.nickname);
+                const likeMoment = (m) => {
+                    const idx = m.likes.indexOf(currentUser.nickname);
+                    if (idx === -1) m.likes.push(currentUser.nickname);
+                    else m.likes.splice(idx, 1);
+                    activeInteractionId.value = null;
+                };
+                const showCommentInput = (id) => {
+                    activeInteractionId.value = null;
+                    commentInputId.value = id;
+                    tempComment.value = '';
+                    nextTick(() => commentInputRef.value?.focus());
+                };
+                const submitComment = (m) => {
+                    if(tempComment.value) {
+                        m.comments.push({ user: currentUser.nickname, text: tempComment.value });
+                        tempComment.value = '';
+                        commentInputId.value = null;
+                    }
+                };
+                const postNewMoment = () => {
+                    if(!newMomentContent.value && !newMomentImage.value) return;
+                    let poster = currentUser;
+                    if (godMode.value && selectedPosterId.value !== 'me') {
+                        const fake = contacts.find(c => c.id == selectedPosterId.value);
+                        if(fake) poster = fake;
+                    }
+                    
+                    moments.unshift({
+                        id: Date.now(), 
+                        name: poster.nickname || poster.name, 
+                        avatar: poster.avatar,
+                        content: newMomentContent.value, 
+                        images: newMomentImage.value ? [newMomentImage.value] : [],
+                        time: '刚刚', likes: [], comments: []
+                    });
+                    showPostMoment.value = false;
+                    newMomentContent.value = ''; newMomentImage.value = null; hasNewMoment.value = true;
+                };
+                const godAddLike = (m) => { const n = prompt("点赞人名"); if(n) m.likes.push(n); };
+                const godAddComment = (m) => { 
+                    const str = prompt("格式: 名字:评论内容");
+                    if(str && str.includes(":")) {
+                        const [u, c] = str.split(":");
+                        m.comments.push({ user: u, text: c });
+                    }
+                };
+
+                // Edit (Legacy & New Panel)
+                const editName = (o, f='nickname') => { if(godMode.value) { const n = prompt("修改名称", o[f] || o.name); if(n) o[f] ? o[f]=n : o.name=n; }};
+                const editId = () => { if(godMode.value) { const n = prompt("修改微信号", currentUser.wechatId); if(n) currentUser.wechatId=n; }};
+                const editBalance = () => { 
+                     if(godMode.value) {
+                        const n = prompt("修改余额", currentUser.balance); 
+                        if(n) currentUser.balance=n; 
+                     }
+                };
+                const handleTabClick = () => { if(currentPage.value) currentPage.value = null; };
+
+                return {
+                    godMode, showGodPanel, systemTime, batteryLevel,
+                    activeTab, currentPage, chats, contacts, currentUser, moments, emojis,
+                    activeChat, totalUnread, inputMessage, sendAsMe, showAddMenu, showPostMoment,
+                    activePanel, activeInteractionId, commentInputId, tempComment, hasNewMoment,
+                    newMomentContent, newMomentImage, previewImage, commentInputRef, selectedPosterId,
+                    switchTab, goBack, openChat, openPage, createNewChat, openContactDetail,
+                    triggerUpload, triggerChatImageUpload, triggerMomentImageUpload, handleFileChange,
+                    sendTextMsg, sendVoiceMsg, appendEmoji, getLastMsg,
+                    togglePanel, closeChatPanels, toggleInteractionMenu, closeInteractionMenus, hasLiked,
+                    likeMoment, showCommentInput, submitComment, postNewMoment, godAddLike, godAddComment,
+                    editName, editId, editBalance, handleTabClick,
+                    fileInput
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
